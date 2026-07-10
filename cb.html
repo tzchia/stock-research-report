@@ -91,13 +91,21 @@ td.nw { white-space: nowrap; }
   </div>
 
   <div class="controls">
-    <span class="seg" role="group" aria-label="排序">
-      <button id="s-code" class="on" type="button">股號</button><button id="s-mat" type="button">CB 到期日</button>
+    <label>排序</label>
+    <span class="seg" role="group" aria-label="排序欄位">
+      <button data-mode="code" class="on" type="button">股號</button><button data-mode="mat" type="button">CB 到期日</button><button data-mode="spread" type="button">距轉換價</button><button data-mode="combo" type="button">綜合：到期＋價差</button>
+    </span>
+    <span class="seg" role="group" aria-label="到期方向" id="dir-seg">
+      <button data-dir="1" class="on" type="button">到期近→遠</button><button data-dir="-1" type="button">遠→近</button>
     </span>
     <label><input type="checkbox" id="pos-only"> 只看 EPS &gt; 0</label>
     <input type="search" id="q" placeholder="過濾股號/名稱" aria-label="過濾">
     <span class="dim" id="count"></span>
   </div>
+  <p class="dim" style="font-size:.78rem;margin:.2rem 0 0">
+    距轉換價一律大→小（空間越大排越前）。「綜合」= 到期日名次＋距轉換價名次加總（兩者並重），
+    到期方向按鈕決定「到期近」還是「到期遠」加分。
+  </p>
 
   <div class="card"><div class="tablewrap"><table>
     <thead><tr><th>股號</th><th>名稱</th><th>市場</th><th>股價</th><th>CB</th><th>轉換價</th><th>距轉換價</th><th>CB 到期日</th><th>剩餘天數</th><th>賣回日</th><th>餘額(億)</th><th>EPS</th></tr></thead>
@@ -126,17 +134,29 @@ td.nw { white-space: nowrap; }
   var D = JSON.parse(document.getElementById('data').textContent);
   var tb = document.getElementById('tb'), posOnly = document.getElementById('pos-only');
   var q = document.getElementById('q'), cnt = document.getElementById('count');
-  var bCode = document.getElementById('s-code'), bMat = document.getElementById('s-mat');
-  var mode = 'code';
+  var mode = 'code', dir = 1;
   function render() {
     var rows = D.slice();
     if (posOnly.checked) rows = rows.filter(function (r) { return r.eps != null && r.eps > 0; });
     var f = (q.value || '').trim().toLowerCase();
     if (f) rows = rows.filter(function (r) {
       return (r.s + r.nm + r.cb + r.cbn).toLowerCase().indexOf(f) >= 0; });
-    rows.sort(mode === 'code'
-      ? function (a, b) { return a.s.localeCompare(b.s) || a.cb.localeCompare(b.cb); }
-      : function (a, b) { return a.mat.localeCompare(b.mat) || a.s.localeCompare(b.s); });
+    var cmp = {
+      code: function (a, b) { return a.s.localeCompare(b.s) || a.cb.localeCompare(b.cb); },
+      mat: function (a, b) { return dir * a.mat.localeCompare(b.mat) || a.s.localeCompare(b.s); },
+      spread: function (a, b) { return b.up - a.up || a.s.localeCompare(b.s); },
+    };
+    if (mode === 'combo') {
+      // rank sum: maturity rank (per direction) + spread rank (bigger first)
+      var byMat = rows.slice().sort(cmp.mat);
+      var bySpr = rows.slice().sort(cmp.spread);
+      var rk = {};
+      byMat.forEach(function (r, i) { rk[r.cb] = i; });
+      bySpr.forEach(function (r, i) { rk[r.cb] += i; });
+      rows.sort(function (a, b) { return rk[a.cb] - rk[b.cb] || a.s.localeCompare(b.s); });
+    } else {
+      rows.sort(cmp[mode]);
+    }
     tb.innerHTML = rows.map(function (r) {
       var e = r.eps == null ? '<span class="dim">無資料</span>'
         : '<span class="' + (r.eps > 0 ? 'pos' : 'neg') + '">' + r.eps.toFixed(2) +
@@ -154,8 +174,23 @@ td.nw { white-space: nowrap; }
     }).join('');
     cnt.textContent = '顯示 ' + rows.length + ' / ' + D.length + ' 檔';
   }
-  bCode.addEventListener('click', function () { mode = 'code'; bCode.classList.add('on'); bMat.classList.remove('on'); render(); });
-  bMat.addEventListener('click', function () { mode = 'mat'; bMat.classList.add('on'); bCode.classList.remove('on'); render(); });
+  var modeBtns = document.querySelectorAll('[data-mode]');
+  modeBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      mode = this.dataset.mode;
+      modeBtns.forEach(function (x) { x.classList.remove('on'); });
+      this.classList.add('on');
+      render();
+    });
+  });
+  document.querySelectorAll('#dir-seg [data-dir]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      dir = +this.dataset.dir;
+      document.querySelectorAll('#dir-seg [data-dir]').forEach(function (x) { x.classList.remove('on'); });
+      this.classList.add('on');
+      render();
+    });
+  });
   posOnly.addEventListener('change', render);
   q.addEventListener('input', render);
   render();
